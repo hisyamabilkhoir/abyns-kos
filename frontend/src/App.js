@@ -16,6 +16,7 @@ import TenantLayout from "./pages/tenant/TenantLayout";
 import TenantDashboard from "./pages/tenant/TenantDashboard";
 import TenantBills from "./pages/tenant/TenantBills";
 import TenantMaintenance from "./pages/tenant/TenantMaintenance";
+import PayResult from "./pages/tenant/PayResult";
 
 export default function App() {
   return (
@@ -39,6 +40,7 @@ export default function App() {
 
           {/* Tenant portal */}
           <Route path="/tenant/login" element={<TenantLogin />} />
+          <Route path="/tenant/pay/result" element={<PayResult />} />
           <Route path="/tenant/:id" element={<TenantLayout />}>
             <Route index element={<Navigate to="dashboard" replace />} />
             <Route path="dashboard" element={<TenantDashboard />} />
