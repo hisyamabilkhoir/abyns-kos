@@ -1457,6 +1457,22 @@ button {
 }
 .expiring-row:hover {
   border-color: var(--royal);
+/* ============ RETENTION INSIGHTS ============ */
+.insight-tile {
+  display: flex;
+  gap: 14px;
+  align-items: flex-start;
+  padding: 14px 16px;
+  border-radius: 16px;
+  border: 1px solid;
+  transition: transform 0.15s, box-shadow 0.15s;
+}
+.insight-tile:hover {
+  transform: translateY(-1px);
+  box-shadow: var(--shadow-sm);
+}
+.insight-tile > svg { flex-shrink: 0; margin-top: 2px; }
+
   transform: translateY(-1px);
 }
 
