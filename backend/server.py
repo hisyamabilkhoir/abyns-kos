@@ -584,6 +584,86 @@ async def dashboard():
     }
 
 
+# ---------- ANNOUNCEMENTS ----------
+class AnnouncementCreate(BaseModel):
+    title: str
+    message: str
+    priority: Optional[str] = "info"  # info | warning | urgent
+    property_id: Optional[str] = None
+
+
+@api.get("/announcements")
+async def list_announcements():
+    """Owner-side list with delivery metrics."""
+    ann = await db.announcements.find({}, {"_id": 0}).sort("created_at", -1).to_list(100)
+    for a in ann:
+        read_count = await db.announcement_reads.count_documents(
+            {"announcement_id": a["id"]}
+        )
+        total = await db.tenants.count_documents(
+            {"property_id": a.get("property_id"), "status": "active"}
+        )
+        if total == 0:
+            total = await db.tenants.count_documents({"status": "active"})
+        a["read_count"] = read_count
+        a["total_recipients"] = total
+    return ann
+
+
+@api.post("/announcements")
+async def create_announcement(body: AnnouncementCreate):
+    prop = None
+    if body.property_id:
+        prop = await db.properties.find_one({"id": body.property_id}, {"_id": 0})
+    if not prop:
+        prop = await db.properties.find_one({}, {"_id": 0})
+    doc = {
+        "id": uid(),
+        "property_id": prop["id"] if prop else None,
+        "title": body.title.strip(),
+        "message": body.message.strip(),
+        "priority": body.priority or "info",
+        "created_at": now_iso(),
+        "author": "Pak Adi",
+    }
+    await db.announcements.insert_one(doc)
+    doc.pop("_id", None)
+    return doc
+
+
+@api.delete("/announcements/{ann_id}")
+async def delete_announcement(ann_id: str):
+    await db.announcements.delete_one({"id": ann_id})
+    await db.announcement_reads.delete_many({"announcement_id": ann_id})
+    return {"ok": True}
+
+
+@api.get("/tenant/{tenant_id}/announcements")
+async def tenant_announcements(tenant_id: str):
+    t = await db.tenants.find_one({"id": tenant_id}, {"_id": 0})
+    if not t:
+        raise HTTPException(404, "Tenant not found")
+    q = {"property_id": t.get("property_id")} if t.get("property_id") else {}
+    ann = await db.announcements.find(q, {"_id": 0}).sort("created_at", -1).to_list(50)
+    read_docs = await db.announcement_reads.find(
+        {"tenant_id": tenant_id}, {"_id": 0}
+    ).to_list(500)
+    read_set = {r["announcement_id"] for r in read_docs}
+    for a in ann:
+        a["read"] = a["id"] in read_set
+    return ann
+
+
+@api.post("/tenant/{tenant_id}/announcements/{ann_id}/read")
+async def mark_announcement_read(tenant_id: str, ann_id: str):
+    await db.announcement_reads.update_one(
+        {"tenant_id": tenant_id, "announcement_id": ann_id},
+        {"$set": {"tenant_id": tenant_id, "announcement_id": ann_id, "read_at": now_iso()}},
+        upsert=True,
+    )
+    return {"ok": True}
+
+
 # ---------- AI ----------
 SYSTEM_PROMPT = """Kamu adalah ABYNS AI, asisten cerdas untuk pemilik kos di Indonesia.
 Kamu berbicara dalam bahasa Indonesia yang santai, ringkas, dan profesional (boleh sesekali menggunakan istilah Inggris singkat).

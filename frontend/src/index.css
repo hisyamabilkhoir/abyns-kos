@@ -1308,6 +1308,76 @@ button {
   padding: 14px;
   border-radius: 14px;
   background: linear-gradient(180deg, #f7f5fa, #efeaf5);
+/* ============ ANNOUNCEMENTS ============ */
+.ann-item {
+  padding: 16px;
+  border-radius: 16px;
+  border: 1px solid var(--line);
+  background: #fff;
+  transition: box-shadow 0.15s, transform 0.15s;
+}
+.ann-item:hover {
+  box-shadow: var(--shadow-sm);
+  transform: translateY(-1px);
+}
+
+.ann-preview-shell {
+  padding: 20px;
+  background: linear-gradient(180deg, #f7f5fa, #efeaf5);
+  border-radius: 20px;
+  border: 1px dashed var(--line-2);
+}
+
+.tenant-ann-banner {
+  position: relative;
+  padding: 14px 16px;
+  border-radius: 16px;
+  border: 1px solid;
+  animation: fade-in 0.4s ease both;
+  color: var(--ink);
+}
+.tenant-ann-banner.priority-info {
+  background: linear-gradient(180deg, #f4ecff, #ece0ff);
+  border-color: #dccafd;
+  color: var(--royal-ink);
+}
+.tenant-ann-banner.priority-warning {
+  background: linear-gradient(180deg, #fbf5e6, #fdf1c6);
+  border-color: #f0dfa6;
+  color: var(--gold-deep);
+}
+.tenant-ann-banner.priority-urgent {
+  background: linear-gradient(180deg, #fce8ec, #fbd6dd);
+  border-color: #f2c8d0;
+  color: var(--danger);
+}
+.ann-icon {
+  width: 30px;
+  height: 30px;
+  border-radius: 10px;
+  background: rgba(255, 255, 255, 0.6);
+  display: grid;
+  place-items: center;
+  flex-shrink: 0;
+  color: inherit;
+}
+.ann-dismiss {
+  width: 28px;
+  height: 28px;
+  border-radius: 8px;
+  border: 1px solid rgba(0, 0, 0, 0.08);
+  background: rgba(255, 255, 255, 0.6);
+  display: grid;
+  place-items: center;
+  color: inherit;
+  flex-shrink: 0;
+  transition: background 0.15s;
+}
+.ann-dismiss:hover {
+  background: #fff;
+}
+
+
   border: 1px solid var(--line);
   display: flex;
   gap: 22px;

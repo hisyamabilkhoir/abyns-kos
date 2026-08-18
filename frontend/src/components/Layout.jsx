@@ -8,6 +8,7 @@ import {
   Wrench,
   LineChart,
   Sparkles,
+  Megaphone,
   FileText,
   Settings,
   Search,
@@ -24,6 +25,7 @@ const NAV = [
   { to: "/billing", icon: Receipt, label: "Billing" },
   { to: "/maintenance", icon: Wrench, label: "Maintenance" },
   { to: "/finance", icon: LineChart, label: "Finance" },
+  { to: "/announcements", icon: Megaphone, label: "Announcements" },
   { to: "/ai", icon: Sparkles, label: "AI Assistant" },
 ];
 

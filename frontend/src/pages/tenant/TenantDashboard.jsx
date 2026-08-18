@@ -4,6 +4,7 @@ import { getTenantDashboard } from "../../services/tenantPortalService";
 import { Card, Badge, Skeleton, statusVariant, statusLabel } from "../../components/UI";
 import { currency } from "../../services/api";
 import QrisPayModal from "../../components/QrisPayModal";
+import TenantAnnouncements from "../../components/TenantAnnouncements";
 import {
   Home,
   Calendar,
@@ -51,6 +52,8 @@ export default function TenantDashboard() {
       )}
 
       {showQris && inv && <QrisPayModal invoice={inv} onClose={closeQris} />}
+
+      <TenantAnnouncements tenantId={id} />
 
       <div className="bill-card reveal">
         <div className="row between">

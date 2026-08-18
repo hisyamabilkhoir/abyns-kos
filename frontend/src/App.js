@@ -10,6 +10,7 @@ import Billing from "./pages/Billing";
 import Maintenance from "./pages/Maintenance";
 import Finance from "./pages/Finance";
 import AIAssistant from "./pages/AIAssistant";
+import Announcements from "./pages/Announcements";
 import Layout from "./components/Layout";
 import TenantLogin from "./pages/tenant/TenantLogin";
 import TenantLayout from "./pages/tenant/TenantLayout";
@@ -35,6 +36,7 @@ export default function App() {
             <Route path="/billing" element={<Billing />} />
             <Route path="/maintenance" element={<Maintenance />} />
             <Route path="/finance" element={<Finance />} />
+            <Route path="/announcements" element={<Announcements />} />
             <Route path="/ai" element={<AIAssistant />} />
           </Route>
 
