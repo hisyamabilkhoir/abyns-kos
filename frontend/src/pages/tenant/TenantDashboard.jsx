@@ -1,6 +1,7 @@
 import { useEffect, useState } from "react";
 import { useNavigate, useParams } from "react-router-dom";
 import { getTenantDashboard } from "../../services/tenantPortalService";
+import { renewContract } from "../../services/contractService";
 import { Card, Badge, Skeleton, statusVariant, statusLabel } from "../../components/UI";
 import { currency } from "../../services/api";
 import QrisPayModal from "../../components/QrisPayModal";
@@ -14,6 +15,8 @@ import {
   CheckCircle2,
   Sparkles,
   Receipt,
+  RefreshCw,
+  X,
 } from "lucide-react";
 
 export default function TenantDashboard() {
@@ -22,6 +25,23 @@ export default function TenantDashboard() {
   const [data, setData] = useState(null);
   const [showQris, setShowQris] = useState(false);
   const [paidToast, setPaidToast] = useState(false);
+  const [renewOpen, setRenewOpen] = useState(false);
+  const [renewMonths, setRenewMonths] = useState(12);
+  const [renewing, setRenewing] = useState(false);
+  const [renewToast, setRenewToast] = useState("");
+
+  const openRenew = () => setRenewOpen(true);
+  const submitRenew = async () => {
+    if (!data?.contract?.id || renewing) return;
+    setRenewing(true);
+    await renewContract(data.contract.id, renewMonths);
+    setRenewToast(`Kontrak diperpanjang ${renewMonths} bulan 🎉`);
+    setTimeout(() => setRenewToast(""), 3500);
+    setRenewOpen(false);
+    setRenewMonths(12);
+    await load();
+    setRenewing(false);
+  };
 
   const load = () => getTenantDashboard(id).then(setData).catch(console.error);
   useEffect(() => {
@@ -48,6 +68,81 @@ export default function TenantDashboard() {
       {paidToast && (
         <div className="paid-toast" data-testid="paid-toast">
           <CheckCircle2 size={18} /> Pembayaran berhasil. Terima kasih!
+        </div>
+      )}
+      {renewToast && (
+        <div className="paid-toast" data-testid="renew-toast-tenant">
+          <CheckCircle2 size={18} /> {renewToast}
+        </div>
+      )}
+
+      {renewOpen && data.contract && (
+        <div
+          className="modal-overlay"
+          onClick={(e) => e.target === e.currentTarget && setRenewOpen(false)}
+        >
+          <div className="modal" data-testid="tenant-renew-modal">
+            <div className="row between" style={{ marginBottom: 14 }}>
+              <div className="row" style={{ gap: 10 }}>
+                <div className="mini-ico" style={{ background: "#fbf1d6", color: "var(--gold-deep)" }}>
+                  <RefreshCw />
+                </div>
+                <div style={{ fontFamily: "Fraunces, serif", fontSize: 22, fontWeight: 500 }}>
+                  Perpanjang Kontrak
+                </div>
+              </div>
+              <button className="icon-btn" onClick={() => setRenewOpen(false)} aria-label="Close">
+                <X size={16} />
+              </button>
+            </div>
+
+            <div className="small muted">Kontrak berakhir</div>
+            <div style={{ fontFamily: "Fraunces, serif", fontSize: 26, fontWeight: 500 }}>
+              {data.contract.end_date}
+            </div>
+
+            <label className="small muted" style={{ marginTop: 14, display: "block" }}>
+              Perpanjang berapa bulan?
+            </label>
+            <div className="row" style={{ gap: 6, marginTop: 6 }}>
+              {[3, 6, 12, 24].map((m) => (
+                <button
+                  key={m}
+                  className="btn btn-sm"
+                  onClick={() => setRenewMonths(m)}
+                  data-testid={`tenant-renew-${m}`}
+                  style={{
+                    background: renewMonths === m ? "var(--royal)" : "#fff",
+                    color: renewMonths === m ? "#fff" : "var(--ink-2)",
+                    border: `1px solid ${renewMonths === m ? "var(--royal)" : "var(--line)"}`,
+                  }}
+                >
+                  {m} bln
+                </button>
+              ))}
+            </div>
+
+            <div className="qris-help" style={{ marginTop: 14 }}>
+              <RefreshCw size={16} style={{ color: "var(--gold-deep)", flexShrink: 0 }} />
+              <div>
+                Kami akan otomatis memperpanjang kontrak Anda dan memberitahu pemilik kos. Tarif{" "}
+                {currency(data.contract.monthly_rent)}/bulan tetap sama.
+              </div>
+            </div>
+
+            <div className="row" style={{ gap: 8, marginTop: 18 }}>
+              <button className="btn btn-ghost" onClick={() => setRenewOpen(false)}>Batal</button>
+              <button
+                className="btn btn-primary"
+                onClick={submitRenew}
+                disabled={renewing}
+                data-testid="tenant-renew-confirm"
+                style={{ flex: 1 }}
+              >
+                {renewing ? "Memproses..." : `Perpanjang ${renewMonths} Bulan`}
+              </button>
+            </div>
+          </div>
         </div>
       )}
 
@@ -197,6 +292,50 @@ export default function TenantDashboard() {
               </div>
             </div>
           </div>
+          {data.contract_days_remaining != null && (
+            <div
+              className={`moveout-card ${
+                data.contract_days_remaining < 0
+                  ? "danger"
+                  : data.contract_days_remaining <= 30
+                    ? "warn"
+                    : "info"
+              }`}
+            >
+              <div style={{ flex: 1 }}>
+                <div className="small" style={{ fontWeight: 700, letterSpacing: "0.14em" }}>
+                  MOVE-OUT COUNTDOWN
+                </div>
+                <div
+                  style={{
+                    fontFamily: "Fraunces, serif",
+                    fontSize: 30,
+                    fontWeight: 500,
+                    letterSpacing: "-0.02em",
+                    marginTop: 2,
+                  }}
+                >
+                  {data.contract_days_remaining < 0
+                    ? `Kontrak lewat ${Math.abs(data.contract_days_remaining)} hari`
+                    : data.contract_days_remaining === 0
+                      ? "Kontrak berakhir hari ini"
+                      : `${data.contract_days_remaining} hari lagi`}
+                </div>
+                <div className="small" style={{ opacity: 0.85, marginTop: 2 }}>
+                  Berakhir {data.contract.end_date}
+                </div>
+              </div>
+              {data.contract_days_remaining <= 60 && (
+                <button
+                  className="btn btn-gold"
+                  onClick={openRenew}
+                  data-testid="tenant-renew-btn"
+                >
+                  <RefreshCw size={14} /> Perpanjang Kontrak
+                </button>
+              )}
+            </div>
+          )}
         </Card>
       )}
 

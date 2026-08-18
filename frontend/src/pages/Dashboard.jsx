@@ -13,17 +13,29 @@ import {
   Cell,
 } from "recharts";
 import { getDashboard } from "../services/dashboardService";
+import { listExpiringContracts, renewContract } from "../services/contractService";
 import { Card, KpiCard, Badge, Avatar, CircularScore, Skeleton, EmptyState } from "../components/UI";
 import { currency, compact } from "../services/api";
-import { ArrowUpRight, Sparkles, ArrowRight, Clock, AlertCircle } from "lucide-react";
+import { ArrowUpRight, Sparkles, ArrowRight, Clock, AlertCircle, CalendarClock, RefreshCw } from "lucide-react";
 
 const COLORS = ["#1f8f5a", "#c58a12", "#b91c3c"];
 
 export default function Dashboard() {
   const [data, setData] = useState(null);
+  const [expiring, setExpiring] = useState([]);
+  const [renewingId, setRenewingId] = useState(null);
+  const loadExp = () => listExpiringContracts(60).then(setExpiring).catch(() => {});
   useEffect(() => {
     getDashboard().then(setData).catch(console.error);
+    loadExp();
   }, []);
+
+  const quickRenew = async (row) => {
+    setRenewingId(row.contract_id);
+    await renewContract(row.contract_id, 12);
+    await loadExp();
+    setRenewingId(null);
+  };
 
   if (!data)
     return (
@@ -283,6 +295,47 @@ export default function Dashboard() {
           ))}
         </Card>
       </div>
+
+      {expiring.length > 0 && (
+        <Card
+          title="Move-out Countdown"
+          style={{ marginTop: 20 }}
+          data-testid="expiring-contracts"
+          actions={<Badge variant="warn" dot>{expiring.length} akan berakhir</Badge>}
+        >
+          <div className="col" style={{ gap: 8 }}>
+            {expiring.slice(0, 6).map((e) => {
+              const critical = e.days_remaining != null && e.days_remaining <= 14;
+              return (
+                <div key={e.contract_id} className="expiring-row" data-testid={`exp-${e.contract_id}`}>
+                  <div className="avatar sm">
+                    <CalendarClock size={14} />
+                  </div>
+                  <div style={{ flex: 1, minWidth: 0 }}>
+                    <div style={{ fontWeight: 600 }}>{e.tenant_name}</div>
+                    <div className="small muted">
+                      Kamar {e.room_number} · berakhir {e.end_date}
+                    </div>
+                  </div>
+                  <Badge variant={critical ? "danger" : "warn"} dot>
+                    {e.days_remaining < 0
+                      ? `Lewat ${Math.abs(e.days_remaining)}d`
+                      : `${e.days_remaining} hari lagi`}
+                  </Badge>
+                  <button
+                    className="btn btn-gold btn-sm"
+                    onClick={() => quickRenew(e)}
+                    disabled={renewingId === e.contract_id}
+                    data-testid={`dash-renew-${e.contract_id}`}
+                  >
+                    <RefreshCw size={12} /> {renewingId === e.contract_id ? "..." : "Renew 12m"}
+                  </button>
+                </div>
+              );
+            })}
+          </div>
+        </Card>
+      )}
     </div>
   );
 }

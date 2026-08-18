@@ -45,7 +45,6 @@ export default function PayResult() {
       else setState("pending");
     };
     decide();
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   const backHref = session?.tenant?.id

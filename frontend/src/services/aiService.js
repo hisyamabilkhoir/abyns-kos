@@ -18,8 +18,7 @@ export async function streamAiChat({ message, sessionId, onDelta, onDone, onErro
     const reader = res.body.getReader();
     const dec = new TextDecoder();
     let buf = "";
-    // eslint-disable-next-line no-constant-condition
-    while (true) {
+    for (;;) {
       const { done, value } = await reader.read();
       if (done) break;
       buf += dec.decode(value, { stream: true });

@@ -371,9 +371,98 @@ async def list_rooms(property_id: Optional[str] = None):
 
 
 # Tenants
+async def _attach_contract(t: dict) -> dict:
+    c = await db.contracts.find_one({"tenant_id": t["id"]}, {"_id": 0})
+    if c:
+        t["contract"] = c
+        try:
+            end = datetime.fromisoformat(c["end_date"]).date()
+            today = datetime.now(timezone.utc).date()
+            days = (end - today).days
+            t["contract_days_remaining"] = days
+            t["contract_end_date"] = c["end_date"]
+            if days < 0:
+                t["contract_status"] = "expired"
+            elif days <= 30:
+                t["contract_status"] = "expiring_soon"
+            elif days <= 60:
+                t["contract_status"] = "expiring"
+            else:
+                t["contract_status"] = "healthy"
+        except Exception:
+            t["contract_days_remaining"] = None
+    return t
+
+
 @api.get("/tenants")
 async def list_tenants():
-    return clean(await db.tenants.find({}).to_list(1000))
+    rows = clean(await db.tenants.find({}).to_list(1000))
+    for t in rows:
+        await _attach_contract(t)
+    return rows
+
+
+@api.get("/contracts/expiring")
+async def contracts_expiring(within_days: int = 60):
+    today = datetime.now(timezone.utc).date()
+    limit_date = (today + timedelta(days=within_days)).isoformat()
+    contracts = await db.contracts.find(
+        {"status": "active", "end_date": {"$lte": limit_date}},
+        {"_id": 0},
+    ).sort("end_date", 1).to_list(200)
+    out = []
+    for c in contracts:
+        t = await db.tenants.find_one({"id": c["tenant_id"]}, {"_id": 0})
+        if not t:
+            continue
+        try:
+            end = datetime.fromisoformat(c["end_date"]).date()
+            days = (end - today).days
+        except Exception:
+            days = None
+        out.append({
+            "contract_id": c["id"],
+            "tenant_id": t["id"],
+            "tenant_name": t["name"],
+            "room_number": t["room_number"],
+            "end_date": c["end_date"],
+            "days_remaining": days,
+            "monthly_rent": c["monthly_rent"],
+        })
+    return out
+
+
+class RenewBody(BaseModel):
+    months: int = 12
+
+
+@api.post("/contracts/{contract_id}/renew")
+async def renew_contract(contract_id: str, body: RenewBody):
+    c = await db.contracts.find_one({"id": contract_id}, {"_id": 0})
+    if not c:
+        raise HTTPException(404, "Contract not found")
+    months = max(1, min(int(body.months or 12), 36))
+    try:
+        cur_end = datetime.fromisoformat(c["end_date"]).date()
+    except Exception:
+        raise HTTPException(400, "Invalid contract end_date")
+    today = datetime.now(timezone.utc).date()
+    base = cur_end if cur_end > today else today
+    new_end = base + timedelta(days=30 * months)
+    await db.contracts.update_one(
+        {"id": contract_id},
+        {"$set": {"end_date": new_end.isoformat(), "renewed_at": now_iso(), "status": "active"}},
+    )
+    tenant = await db.tenants.find_one({"id": c["tenant_id"]}, {"_id": 0})
+    await db.notifications.insert_one({
+        "id": uid(),
+        "property_id": None,
+        "type": "contract",
+        "title": "Contract renewed",
+        "message": f"{tenant['name'] if tenant else 'Tenant'} — {months} bulan (end {new_end.isoformat()})",
+        "created_at": now_iso(),
+    })
+    return {"ok": True, "contract_id": contract_id, "new_end_date": new_end.isoformat(), "months_added": months}
 
 
 @api.get("/tenants/{tenant_id}")
@@ -382,6 +471,7 @@ async def get_tenant(tenant_id: str):
     if not t:
         raise HTTPException(404, "Tenant not found")
     t["contract"] = await db.contracts.find_one({"tenant_id": tenant_id}, {"_id": 0})
+    await _attach_contract(t)
     t["invoices"] = clean(await db.invoices.find({"tenant_id": tenant_id}).sort("issue_date", -1).to_list(50))
     t["payments"] = clean(await db.payments.find({"tenant_id": tenant_id}).sort("paid_at", -1).to_list(50))
     return t
@@ -1005,9 +1095,17 @@ async def tenant_dashboard(tenant_id: str):
     if current_inv and current_inv.get("status") != "paid":
         due = datetime.fromisoformat(current_inv["due_date"]).date()
         days_left = (due - today).days
+    contract_days = None
+    if contract and contract.get("end_date"):
+        try:
+            end = datetime.fromisoformat(contract["end_date"]).date()
+            contract_days = (end - today).days
+        except Exception:
+            pass
     return {
         "tenant": t,
         "contract": contract,
+        "contract_days_remaining": contract_days,
         "current_invoice": current_inv,
         "days_until_due": days_left,
         "total_paid": total_paid_agg[0]["total"] if total_paid_agg else 0,

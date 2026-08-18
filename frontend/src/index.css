@@ -1418,6 +1418,48 @@ button {
   box-shadow: 0 2px 4px rgba(0, 0, 0, 0.04);
 }
 
+/* ============ MOVE-OUT COUNTDOWN ============ */
+.moveout-card {
+  margin-top: 16px;
+  padding: 16px 18px;
+  border-radius: 16px;
+  display: flex;
+  gap: 14px;
+  align-items: center;
+  flex-wrap: wrap;
+  border: 1px solid;
+}
+.moveout-card.info {
+  background: linear-gradient(180deg, #f4ecff, #ece0ff);
+  border-color: #dccafd;
+  color: var(--royal-ink);
+}
+.moveout-card.warn {
+  background: linear-gradient(180deg, #fbf5e6, #fdf1c6);
+  border-color: #f0dfa6;
+  color: var(--gold-deep);
+}
+.moveout-card.danger {
+  background: linear-gradient(180deg, #fce8ec, #fbd6dd);
+  border-color: #f2c8d0;
+  color: var(--danger);
+}
+
+.expiring-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 10px 12px;
+  border-radius: 12px;
+  border: 1px solid var(--line);
+  background: #fff;
+  transition: border-color 0.15s, transform 0.15s;
+}
+.expiring-row:hover {
+  border-color: var(--royal);
+  transform: translateY(-1px);
+}
+
   place-items: center;
   color: inherit;
   flex-shrink: 0;
