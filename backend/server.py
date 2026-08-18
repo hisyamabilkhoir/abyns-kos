@@ -641,6 +641,148 @@ async def ai_chat(body: AiChatBody):
     )
 
 
+# ---------- TENANT PORTAL ----------
+class TenantLoginBody(BaseModel):
+    email: str
+
+
+class MaintenanceCreateBody(BaseModel):
+    issue: str
+    priority: Optional[str] = "medium"
+    description: Optional[str] = ""
+
+
+@api.post("/tenant/login")
+async def tenant_login(body: TenantLoginBody):
+    """Mock login — matches by email (case-insensitive)."""
+    t = await db.tenants.find_one({"email": {"$regex": f"^{body.email}$", "$options": "i"}}, {"_id": 0})
+    if not t:
+        raise HTTPException(404, "Tenant not found. Coba email lain.")
+    return {"tenant": t, "token": f"mock-{t['id']}"}
+
+
+@api.get("/tenant/{tenant_id}/dashboard")
+async def tenant_dashboard(tenant_id: str):
+    t = await db.tenants.find_one({"id": tenant_id}, {"_id": 0})
+    if not t:
+        raise HTTPException(404, "Tenant not found")
+    contract = await db.contracts.find_one({"tenant_id": tenant_id}, {"_id": 0})
+    current_period = datetime.now(timezone.utc).strftime("%Y-%m")
+    current_inv = await db.invoices.find_one(
+        {"tenant_id": tenant_id, "period": current_period}, {"_id": 0}
+    )
+    total_paid_agg = await db.payments.aggregate([
+        {"$match": {"tenant_id": tenant_id, "status": "verified"}},
+        {"$group": {"_id": None, "total": {"$sum": "$amount"}}},
+    ]).to_list(1)
+    total_invoices = await db.invoices.count_documents({"tenant_id": tenant_id})
+    paid_invoices = await db.invoices.count_documents({"tenant_id": tenant_id, "status": "paid"})
+    open_maint = await db.maintenance.count_documents({
+        "tenant_id": tenant_id, "status": {"$in": ["waiting", "in_progress"]},
+    })
+    today = datetime.now(timezone.utc).date()
+    days_left = None
+    if current_inv and current_inv.get("status") != "paid":
+        due = datetime.fromisoformat(current_inv["due_date"]).date()
+        days_left = (due - today).days
+    return {
+        "tenant": t,
+        "contract": contract,
+        "current_invoice": current_inv,
+        "days_until_due": days_left,
+        "total_paid": total_paid_agg[0]["total"] if total_paid_agg else 0,
+        "total_invoices": total_invoices,
+        "paid_invoices": paid_invoices,
+        "open_maintenance": open_maint,
+    }
+
+
+@api.get("/tenant/{tenant_id}/invoices")
+async def tenant_invoices(tenant_id: str):
+    invs = await db.invoices.find({"tenant_id": tenant_id}, {"_id": 0}).sort("issue_date", -1).to_list(100)
+    today = datetime.now(timezone.utc).date()
+    for i in invs:
+        try:
+            due = datetime.fromisoformat(i["due_date"]).date()
+            i["days_diff"] = (due - today).days
+        except Exception:
+            i["days_diff"] = None
+    return invs
+
+
+@api.post("/invoices/{invoice_id}/pay")
+async def pay_invoice(invoice_id: str):
+    inv = await db.invoices.find_one({"id": invoice_id}, {"_id": 0})
+    if not inv:
+        raise HTTPException(404, "Invoice not found")
+    if inv["status"] == "paid":
+        return {"ok": True, "already_paid": True, "invoice": inv}
+    now = now_iso()
+    payment = {
+        "id": uid(),
+        "invoice_id": invoice_id,
+        "tenant_id": inv["tenant_id"],
+        "amount": inv["amount"],
+        "method": "abyns_pay",
+        "paid_at": now,
+        "status": "verified",
+    }
+    await db.payments.insert_one(payment)
+    await db.invoices.update_one({"id": invoice_id}, {"$set": {"status": "paid"}})
+    # Update tenant payment_status snapshot
+    await db.tenants.update_one({"id": inv["tenant_id"]}, {"$set": {"payment_status": "paid"}})
+    # Notify owner
+    tenant = await db.tenants.find_one({"id": inv["tenant_id"]}, {"_id": 0})
+    await db.notifications.insert_one({
+        "id": uid(),
+        "property_id": inv["property_id"],
+        "type": "payment",
+        "title": "Payment received",
+        "message": f"{tenant['name'] if tenant else 'Tenant'} paid {inv['amount']:,} via ABYNS Pay",
+        "created_at": now,
+    })
+    payment.pop("_id", None)
+    return {"ok": True, "payment": payment}
+
+
+@api.get("/tenant/{tenant_id}/maintenance")
+async def tenant_maintenance(tenant_id: str):
+    items = await db.maintenance.find(
+        {"tenant_id": tenant_id}, {"_id": 0}
+    ).sort("reported_at", -1).to_list(50)
+    return items
+
+
+@api.post("/tenant/{tenant_id}/maintenance")
+async def create_tenant_maintenance(tenant_id: str, body: MaintenanceCreateBody):
+    t = await db.tenants.find_one({"id": tenant_id}, {"_id": 0})
+    if not t:
+        raise HTTPException(404, "Tenant not found")
+    doc = {
+        "id": uid(),
+        "tenant_id": tenant_id,
+        "property_id": t.get("property_id"),
+        "room_number": t.get("room_number"),
+        "issue": body.issue,
+        "description": body.description or "",
+        "priority": body.priority or "medium",
+        "status": "waiting",
+        "technician": None,
+        "reported_at": now_iso(),
+    }
+    await db.maintenance.insert_one(doc)
+    await db.notifications.insert_one({
+        "id": uid(),
+        "property_id": t.get("property_id"),
+        "type": "maintenance",
+        "title": "New maintenance report",
+        "message": f"{t['name']} ({t.get('room_number')}) — {body.issue}",
+        "created_at": now_iso(),
+    })
+    doc.pop("_id", None)
+    return doc
+
+
 app.include_router(api)
 app.add_middleware(
     CORSMiddleware,

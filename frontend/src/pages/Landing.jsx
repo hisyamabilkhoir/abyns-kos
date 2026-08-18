@@ -48,6 +48,9 @@ export default function Landing() {
             <Link to="/dashboard" className="btn btn-primary btn-sm" data-testid="nav-explore-demo">
               Explore Demo <ArrowRight size={14} />
             </Link>
+            <Link to="/tenant/login" className="btn btn-ghost btn-sm" data-testid="nav-tenant-portal">
+              Tenant Portal
+            </Link>
           </div>
         </div>
       </nav>
@@ -424,6 +427,9 @@ export default function Landing() {
             </Link>
             <Link to="/ai" className="btn btn-gold" data-testid="final-cta-ai">
               See ABYNS AI <Sparkles size={16} />
+            </Link>
+            <Link to="/tenant/login" className="btn btn-ghost" data-testid="final-cta-tenant">
+              Open Tenant Portal
             </Link>
           </div>
         </div>

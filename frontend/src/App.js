@@ -1,4 +1,4 @@
-import { BrowserRouter, Routes, Route } from "react-router-dom";
+import { BrowserRouter, Routes, Route, Navigate } from "react-router-dom";
 import "./App.css";
 import Landing from "./pages/Landing";
 import Dashboard from "./pages/Dashboard";
@@ -11,6 +11,11 @@ import Maintenance from "./pages/Maintenance";
 import Finance from "./pages/Finance";
 import AIAssistant from "./pages/AIAssistant";
 import Layout from "./components/Layout";
+import TenantLogin from "./pages/tenant/TenantLogin";
+import TenantLayout from "./pages/tenant/TenantLayout";
+import TenantDashboard from "./pages/tenant/TenantDashboard";
+import TenantBills from "./pages/tenant/TenantBills";
+import TenantMaintenance from "./pages/tenant/TenantMaintenance";
 
 export default function App() {
   return (
@@ -18,6 +23,8 @@ export default function App() {
       <BrowserRouter>
         <Routes>
           <Route path="/" element={<Landing />} />
+
+          {/* Owner app */}
           <Route element={<Layout />}>
             <Route path="/dashboard" element={<Dashboard />} />
             <Route path="/properties" element={<Properties />} />
@@ -28,6 +35,15 @@ export default function App() {
             <Route path="/maintenance" element={<Maintenance />} />
             <Route path="/finance" element={<Finance />} />
             <Route path="/ai" element={<AIAssistant />} />
+          </Route>
+
+          {/* Tenant portal */}
+          <Route path="/tenant/login" element={<TenantLogin />} />
+          <Route path="/tenant/:id" element={<TenantLayout />}>
+            <Route index element={<Navigate to="dashboard" replace />} />
+            <Route path="dashboard" element={<TenantDashboard />} />
+            <Route path="bills" element={<TenantBills />} />
+            <Route path="maintenance" element={<TenantMaintenance />} />
           </Route>
         </Routes>
       </BrowserRouter>
