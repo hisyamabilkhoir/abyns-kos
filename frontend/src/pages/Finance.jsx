@@ -15,7 +15,8 @@ import {
 import { getFinanceSummary, listExpenses, getRetention } from "../services/financeService";
 import { Card, KpiCard, Badge, Skeleton } from "../components/UI";
 import { currency, compact } from "../services/api";
-import { TrendingUp, TrendingDown, Users, RefreshCw } from "lucide-react";
+import { TrendingUp, TrendingDown, Users, RefreshCw, Sparkles } from "lucide-react";
+import RetentionAdvisorModal from "../components/RetentionAdvisorModal";
 
 const CAT_COLORS = {
   Maintenance: "#b91c3c",
@@ -30,6 +31,7 @@ export default function Finance() {
   const [sum, setSum] = useState(null);
   const [exp, setExp] = useState(null);
   const [ret, setRet] = useState(null);
+  const [advisor, setAdvisor] = useState(false);
 
   useEffect(() => {
     Promise.all([getFinanceSummary(), listExpenses(), getRetention()]).then(([a, b, c]) => {
@@ -242,12 +244,21 @@ export default function Finance() {
 
             <div className="insight-tile" style={{ background: "linear-gradient(180deg, #fce8ec, #fbd6dd)", borderColor: "#f2c8d0" }}>
               <TrendingDown size={22} style={{ color: "var(--danger)" }} />
-              <div>
+              <div style={{ flex: 1 }}>
                 <div className="small" style={{ fontWeight: 700, letterSpacing: "0.14em" }}>PERLU PERHATIAN</div>
                 <div style={{ fontFamily: "Fraunces, serif", fontSize: 22, fontWeight: 500 }}>
                   {ret.worst_month} · {ret.worst_month_pct}%
                 </div>
-                <div className="small muted">Retention terendah — review harga & fasilitas</div>
+                <div className="small muted" style={{ marginBottom: 8 }}>
+                  Retention terendah — mungkin butuh review
+                </div>
+                <button
+                  className="btn btn-primary btn-sm"
+                  onClick={() => setAdvisor(true)}
+                  data-testid="ask-advisor-btn"
+                >
+                  <Sparkles size={12} /> Tanya ABYNS AI
+                </button>
               </div>
             </div>
 
@@ -275,6 +286,14 @@ export default function Finance() {
           </div>
         </Card>
       </div>
+
+      {advisor && (
+        <RetentionAdvisorModal
+          worst={ret.worst_month}
+          worstPct={ret.worst_month_pct}
+          onClose={() => setAdvisor(false)}
+        />
+      )}
     </div>
   );
 }

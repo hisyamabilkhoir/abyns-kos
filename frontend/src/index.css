@@ -1475,6 +1475,28 @@ button {
 
   transform: translateY(-1px);
 }
+/* ============ AI ADVISOR MODAL ============ */
+.advisor-modal { max-width: 540px; }
+.advisor-body {
+  min-height: 200px;
+  max-height: 60vh;
+  overflow-y: auto;
+  padding: 16px;
+  border-radius: 14px;
+  background: linear-gradient(180deg, #fbf9ff, #f4ecff);
+  border: 1px solid var(--line-2);
+}
+.advisor-cursor {
+  display: inline-block;
+  width: 8px;
+  height: 16px;
+  vertical-align: -3px;
+  background: var(--royal);
+  margin-left: 2px;
+  animation: cursor-blink 0.9s steps(2) infinite;
+}
+@keyframes cursor-blink { 50% { opacity: 0; } }
+
 
   place-items: center;
   color: inherit;

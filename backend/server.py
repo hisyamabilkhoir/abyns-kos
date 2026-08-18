@@ -1193,6 +1193,67 @@ MAINTENANCE TERBUKA:
     return ctx
 
 
+@api.post("/ai/retention-advisor")
+async def ai_retention_advisor():
+    """Stream a concrete retention diagnosis + action plan based on real data."""
+    from emergentintegrations.llm.chat import LlmChat, UserMessage, TextDelta, StreamDone
+
+    retention = await finance_retention()
+    session_id = uid()
+
+    lines = [
+        f"- {m['month']} {m['period']}: renewed={m['renewed']}, churned={m['churned']}, "
+        f"retention={m['retention_pct']}%"
+        for m in retention["months"]
+    ]
+    context = (
+        f"DATA RETENTION 6 BULAN ABYNS RESIDENCE BANDUNG:\n"
+        + "\n".join(lines)
+        + f"\n\nOverall retention: {retention['overall_retention_pct']}%\n"
+        f"Bulan terbaik: {retention['best_month']} ({retention['best_month_pct']}%)\n"
+        f"Bulan terburuk: {retention['worst_month']} ({retention['worst_month_pct']}%)\n"
+        f"Avg tenure aktif: {retention['avg_active_tenure_months']} bulan\n"
+        f"Renewals lifetime aktual: {retention['total_renewed_actual']}\n"
+        f"Tenant aktif: {retention['active_tenants']}"
+    )
+    prompt = (
+        "Sebagai konsultan properti kos, analisa data retention di atas. "
+        f"Fokus jelaskan kenapa bulan {retention['worst_month']} turun ke "
+        f"{retention['worst_month_pct']}% (drop dari rata-rata "
+        f"{retention['overall_retention_pct']}%). "
+        "Berikan:\n\n"
+        "1. **DIAGNOSA** (2-3 kemungkinan penyebab konkret berdasarkan data)\n"
+        "2. **TINDAKAN** (3 aksi konkret yang bisa Pak Adi lakukan minggu ini)\n"
+        "3. **TARGET** (angka realistis retention 3 bulan ke depan)\n\n"
+        "Gunakan bahasa Indonesia yang ringkas, konkret, tanpa bertele-tele. "
+        "Gunakan bold untuk poin penting. Maksimal 200 kata."
+    )
+    chat = LlmChat(
+        api_key=EMERGENT_LLM_KEY,
+        session_id=session_id,
+        system_message=SYSTEM_PROMPT + "\n\n" + context,
+    ).with_model("gemini", "gemini-3-flash-preview")
+
+    async def gen():
+        try:
+            yield f"event: session\ndata: {json.dumps({'session_id': session_id})}\n\n"
+            async for ev in chat.stream_message(UserMessage(text=prompt)):
+                if isinstance(ev, TextDelta):
+                    yield f"data: {json.dumps({'delta': ev.content})}\n\n"
+                elif isinstance(ev, StreamDone):
+                    break
+            yield "event: done\ndata: {}\n\n"
+        except Exception as e:
+            log.exception("AI advisor stream error")
+            yield f"event: error\ndata: {json.dumps({'error': str(e)})}\n\n"
+
+    return StreamingResponse(
+        gen(),
+        media_type="text/event-stream",
+        headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no", "Connection": "keep-alive"},
+    )
+
+
 @api.post("/ai/chat")
 async def ai_chat(body: AiChatBody):
     """Stream a Gemini response as SSE."""
