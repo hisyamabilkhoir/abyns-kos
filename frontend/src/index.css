@@ -1368,6 +1368,56 @@ button {
   border: 1px solid rgba(0, 0, 0, 0.08);
   background: rgba(255, 255, 255, 0.6);
   display: grid;
+/* ============ WHATSAPP REMINDERS ============ */
+.reminder-preview-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 8px 10px;
+  border-radius: 12px;
+  border: 1px solid var(--line);
+  background: #fff;
+}
+.reminder-history-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 6px 8px;
+  border-radius: 10px;
+  background: #fbf9ff;
+}
+.toast-warn {
+  background: linear-gradient(180deg, #c58a12, #a4700e) !important;
+  box-shadow: 0 14px 34px rgba(197, 138, 18, 0.35) !important;
+}
+.toast-error {
+  background: linear-gradient(180deg, #b91c3c, #931432) !important;
+  box-shadow: 0 14px 34px rgba(185, 28, 60, 0.35) !important;
+}
+.wa-preview {
+  padding: 14px;
+  background: linear-gradient(180deg, #e5f6da, #d4efc2);
+  border-radius: 14px;
+  border: 1px solid #c8e5b1;
+}
+.wa-header {
+  display: flex;
+  gap: 10px;
+  align-items: center;
+  margin-bottom: 10px;
+}
+.wa-bubble {
+  background: #fff;
+  padding: 12px 14px;
+  border-radius: 14px;
+  border-top-left-radius: 4px;
+  white-space: pre-wrap;
+  font-size: 13.5px;
+  line-height: 1.6;
+  color: var(--ink);
+  box-shadow: 0 2px 4px rgba(0, 0, 0, 0.04);
+}
+
   place-items: center;
   color: inherit;
   flex-shrink: 0;

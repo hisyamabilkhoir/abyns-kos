@@ -3,7 +3,7 @@
 FastAPI + MongoDB. Data is modeled relationally (foreign-key style UUIDs)
 so this prototype can be re-implemented on CodeIgniter 4 + MySQL later.
 """
-from fastapi import FastAPI, APIRouter, HTTPException
+from fastapi import FastAPI, APIRouter, HTTPException, Request
 from fastapi.responses import StreamingResponse
 from dotenv import load_dotenv
 from starlette.middleware.cors import CORSMiddleware
@@ -662,6 +662,223 @@ async def mark_announcement_read(tenant_id: str, ann_id: str):
         upsert=True,
     )
     return {"ok": True}
+
+
+# ---------- WHATSAPP REMINDERS (Fonnte) ----------
+FONNTE_TOKEN = os.environ.get("FONNTE_TOKEN", "")
+FONNTE_URL = "https://api.fonnte.com/send"
+FRONTEND_URL = os.environ.get("FRONTEND_URL", "")
+WEBHOOK_CRON_SECRET = os.environ.get("WEBHOOK_CRON_SECRET", "")
+
+
+def _normalize_phone(p: str) -> Optional[str]:
+    if not p:
+        return None
+    digits = "".join(ch for ch in p if ch.isdigit())
+    if not digits:
+        return None
+    if digits.startswith("0"):
+        digits = "62" + digits[1:]
+    elif digits.startswith("8"):
+        digits = "62" + digits
+    return digits
+
+
+def _reminder_type(due_date_iso: str, status: str) -> Optional[str]:
+    try:
+        due = datetime.fromisoformat(due_date_iso).date()
+    except Exception:
+        return None
+    today = datetime.now(timezone.utc).date()
+    diff = (due - today).days
+    if diff == 2 and status == "pending":
+        return "H-2"
+    if diff == 0 and status in ("pending", "overdue"):
+        return "H0"
+    if diff == -2 and status == "overdue":
+        return "H+2"
+    return None
+
+
+def _reminder_message(tenant: dict, inv: dict, rtype: str) -> str:
+    name = tenant.get("name", "").split(" ")[0] or "Kak"
+    amount = f"Rp{inv['amount']:,}".replace(",", ".")
+    link = f"{FRONTEND_URL}/tenant/login" if FRONTEND_URL else "portal ABYNS"
+    tag = {
+        "H-2": "⏰ Masih ada 2 hari lagi",
+        "H0": "⚠️ Hari ini adalah tanggal jatuh tempo",
+        "H+2": "🙏 Sudah terlambat 2 hari — mohon segera dilunasi",
+    }[rtype]
+    return (
+        f"Halo {name}! 👋 Ini ABYNS KOS.\n\n"
+        f"Tagihan kamar *{tenant.get('room_number','-')}* periode *{inv['period']}*:\n"
+        f"💰 {amount}\n"
+        f"📅 Jatuh tempo *{inv['due_date']}*\n\n"
+        f"{tag}\n\n"
+        f"Bayar cepat via QRIS di portal:\n{link}\n\n"
+        f"Terima kasih 🙏"
+    )
+
+
+def _fonnte_send(target: str, message: str) -> dict:
+    if not FONNTE_TOKEN:
+        return {"ok": False, "error": "FONNTE_TOKEN not set"}
+    try:
+        r = requests.post(
+            FONNTE_URL,
+            headers={"Authorization": FONNTE_TOKEN},
+            data={"target": target, "message": message, "countryCode": "62"},
+            timeout=15,
+        )
+        try:
+            body = r.json()
+        except Exception:
+            body = {"raw": r.text[:300]}
+        ok = bool(body.get("status", False)) if isinstance(body, dict) else False
+        return {"ok": ok, "http": r.status_code, "response": body}
+    except Exception as e:
+        log.exception("Fonnte send error")
+        return {"ok": False, "error": str(e)}
+
+
+async def _send_and_log_reminder(inv: dict, rtype: str, triggered_by: str = "cron"):
+    """Send reminder + record in DB (idempotent per day+invoice+type)."""
+    today = datetime.now(timezone.utc).date().isoformat()
+    existing = await db.reminders.find_one(
+        {"invoice_id": inv["id"], "day_key": today, "reminder_type": rtype}, {"_id": 0}
+    )
+    if existing:
+        return {"skipped": True, "reason": "already_sent_today", "record": existing}
+
+    tenant = await db.tenants.find_one({"id": inv["tenant_id"]}, {"_id": 0}) or {}
+    phone = _normalize_phone(tenant.get("phone", ""))
+    if not phone:
+        return {"ok": False, "error": "tenant has no phone"}
+
+    message = _reminder_message(tenant, inv, rtype)
+    result = _fonnte_send(phone, message)
+    record = {
+        "id": uid(),
+        "invoice_id": inv["id"],
+        "tenant_id": inv["tenant_id"],
+        "tenant_name": tenant.get("name"),
+        "phone": phone,
+        "reminder_type": rtype,
+        "message": message,
+        "sent_at": now_iso(),
+        "day_key": today,
+        "status": "sent" if result.get("ok") else "failed",
+        "provider_response": result,
+        "triggered_by": triggered_by,
+    }
+    await db.reminders.insert_one(record)
+    record.pop("_id", None)
+    return {"ok": result.get("ok"), "record": record, "provider": result}
+
+
+class ReminderSendBody(BaseModel):
+    invoice_id: str
+
+
+@api.post("/reminders/send")
+async def reminder_send_manual(body: ReminderSendBody):
+    inv = await db.invoices.find_one({"id": body.invoice_id}, {"_id": 0})
+    if not inv:
+        raise HTTPException(404, "Invoice not found")
+    if inv["status"] == "paid":
+        raise HTTPException(400, "Invoice already paid.")
+    rtype = _reminder_type(inv["due_date"], inv["status"]) or "manual"
+    return await _send_and_log_reminder(inv, rtype, triggered_by="manual")
+
+
+@api.get("/reminders")
+async def reminders_history(limit: int = 50):
+    docs = await db.reminders.find({}, {"_id": 0}).sort("sent_at", -1).to_list(limit)
+    today = datetime.now(timezone.utc).date().isoformat()
+    today_count = sum(1 for d in docs if d.get("day_key") == today)
+    return {
+        "history": docs,
+        "today_count": today_count,
+        "total": len(docs),
+    }
+
+
+@api.get("/reminders/preview")
+async def reminders_preview():
+    """Owner sees what would be sent right now (dry-run)."""
+    today = datetime.now(timezone.utc).date()
+    lo = (today - timedelta(days=3)).isoformat()
+    hi = (today + timedelta(days=3)).isoformat()
+    invs = await db.invoices.find(
+        {
+            "status": {"$in": ["pending", "overdue"]},
+            "due_date": {"$gte": lo, "$lte": hi},
+        },
+        {"_id": 0},
+    ).to_list(200)
+    tenants = {t["id"]: t for t in await db.tenants.find({}, {"_id": 0}).to_list(1000)}
+    already = {
+        r["invoice_id"] + "|" + r["reminder_type"]
+        for r in await db.reminders.find(
+            {"day_key": today.isoformat()}, {"_id": 0}
+        ).to_list(500)
+    }
+    out = []
+    for i in invs:
+        rt = _reminder_type(i["due_date"], i["status"])
+        if not rt:
+            continue
+        t = tenants.get(i["tenant_id"], {})
+        key = i["id"] + "|" + rt
+        out.append({
+            "invoice_id": i["id"],
+            "tenant_id": i["tenant_id"],
+            "tenant_name": t.get("name"),
+            "room_number": t.get("room_number"),
+            "phone": _normalize_phone(t.get("phone", "")),
+            "reminder_type": rt,
+            "amount": i["amount"],
+            "due_date": i["due_date"],
+            "already_sent_today": key in already,
+        })
+    return out
+
+
+@api.post("/cron/reminders")
+async def cron_reminders(request: Request):
+    # Cron endpoints must ack 2xx immediately; enqueue/background the actual work.
+    auth = request.headers.get("authorization", "")
+    if not WEBHOOK_CRON_SECRET or not auth.startswith("Bearer "):
+        raise HTTPException(401, "Unauthorized")
+    token = auth.split(" ", 1)[1].strip()
+    import hmac
+    if not hmac.compare_digest(token, WEBHOOK_CRON_SECRET):
+        raise HTTPException(401, "Unauthorized")
+
+    run_id = request.headers.get("x-webhook-id", uid())
+
+    async def _work():
+        today = datetime.now(timezone.utc).date()
+        lo = (today - timedelta(days=3)).isoformat()
+        hi = (today + timedelta(days=3)).isoformat()
+        invs = await db.invoices.find(
+            {
+                "status": {"$in": ["pending", "overdue"]},
+                "due_date": {"$gte": lo, "$lte": hi},
+            },
+            {"_id": 0},
+        ).to_list(500)
+        for i in invs:
+            rt = _reminder_type(i["due_date"], i["status"])
+            if rt:
+                try:
+                    await _send_and_log_reminder(i, rt, triggered_by=f"cron:{run_id}")
+                except Exception:
+                    log.exception("reminder failed for %s", i.get("id"))
+
+    import asyncio
+    asyncio.create_task(_work())
+    return {"ok": True, "queued": True, "run_id": run_id}
 
 
 # ---------- AI ----------
