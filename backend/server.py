@@ -1193,6 +1193,103 @@ MAINTENANCE TERBUKA:
     return ctx
 
 
+# ---------- ADVISOR ACTIONS ----------
+EXIT_INTERVIEW_MSG = (
+    "Halo {name} 👋 Ini Pak Adi dari ABYNS KOS.\n\n"
+    "Terima kasih sudah pernah tinggal di sini. Boleh minta 30 detik feedback jujur "
+    "tentang apa yang bisa kami tingkatkan? Balas pesan ini dengan 1 kalimat saja.\n\n"
+    "Feedback Anda sangat berharga untuk kami. 🙏"
+)
+
+
+@api.post("/advisor/actions/exit-interview")
+async def act_exit_interview():
+    # Send to tenants whose contract is expired and not recently renewed
+    today_iso = datetime.now(timezone.utc).date().isoformat()
+    contracts = await db.contracts.find(
+        {"end_date": {"$lt": today_iso}, "status": "active"}, {"_id": 0}
+    ).to_list(200)
+    sent, skipped = [], []
+    for c in contracts:
+        # skip if renewed within 30 days
+        if c.get("renewed_at"):
+            try:
+                r = datetime.fromisoformat(c["renewed_at"])
+                if (datetime.now(timezone.utc) - r).days < 30:
+                    continue
+            except Exception:
+                pass
+        t = await db.tenants.find_one({"id": c["tenant_id"]}, {"_id": 0}) or {}
+        phone = _normalize_phone(t.get("phone", ""))
+        if not phone:
+            skipped.append(t.get("name"))
+            continue
+        msg = EXIT_INTERVIEW_MSG.format(name=(t.get("name") or "").split(" ")[0] or "Kak")
+        result = _fonnte_send(phone, msg)
+        await db.reminders.insert_one({
+            "id": uid(),
+            "tenant_id": t["id"],
+            "phone": phone,
+            "reminder_type": "EXIT-INTERVIEW",
+            "message": msg,
+            "sent_at": now_iso(),
+            "day_key": today_iso,
+            "status": "sent" if result.get("ok") else "failed",
+            "provider_response": result,
+            "triggered_by": "advisor",
+        })
+        (sent if result.get("ok") else skipped).append(t.get("name"))
+    return {"ok": True, "sent_count": len(sent), "sent": sent, "skipped": skipped}
+
+
+@api.post("/advisor/actions/loyalty-program")
+async def act_loyalty_program():
+    prop = await db.properties.find_one({}, {"_id": 0})
+    doc = {
+        "id": uid(),
+        "property_id": prop["id"] if prop else None,
+        "title": "🎁 Bonus Perpanjangan Kontrak",
+        "message": (
+            "Kabar baik! Buat tenant yang perpanjang kontrak sebelum H-7 jatuh tempo, "
+            "dapat voucher laundry gratis 1 bulan + free upgrade WiFi ke 100Mbps. "
+            "Klik Perpanjang Kontrak di portal untuk klaim otomatis. Berlaku 30 hari."
+        ),
+        "priority": "info",
+        "created_at": now_iso(),
+        "author": "Pak Adi (via AI Advisor)",
+    }
+    await db.announcements.insert_one(doc)
+    total = await db.tenants.count_documents({"status": "active"})
+    doc.pop("_id", None)
+    return {"ok": True, "announcement_id": doc["id"], "recipients": total}
+
+
+@api.post("/advisor/actions/preventive-maintenance")
+async def act_preventive_maintenance():
+    prop = await db.properties.find_one({}, {"_id": 0})
+    items = [
+        ("Preventive AC service — cek freon & bersihkan filter", "medium"),
+        ("Preventive WiFi audit — cek kecepatan & router utama", "medium"),
+        ("Preventive plumbing check — pipa & saluran kamar mandi", "low"),
+    ]
+    created = []
+    for issue, prio in items:
+        doc = {
+            "id": uid(),
+            "property_id": prop["id"] if prop else None,
+            "room_number": "COMMON",
+            "issue": issue,
+            "description": "Auto-created by AI Retention Advisor",
+            "priority": prio,
+            "status": "waiting",
+            "technician": None,
+            "reported_at": now_iso(),
+        }
+        await db.maintenance.insert_one(doc)
+        created.append(doc["id"])
+    return {"ok": True, "created_count": len(created), "ids": created}
+
+
 @api.post("/ai/retention-advisor")
 async def ai_retention_advisor():
     """Stream a concrete retention diagnosis + action plan based on real data."""

@@ -1492,6 +1492,40 @@ button {
   height: 16px;
   vertical-align: -3px;
   background: var(--royal);
+.advisor-modal { max-width: 640px; }
+.advisor-actions-label {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 10.5px;
+  letter-spacing: 0.28em;
+  text-transform: uppercase;
+  color: var(--royal);
+  font-weight: 700;
+  margin: 18px 0 10px;
+}
+.advisor-actions-grid {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 10px;
+}
+.advisor-action-card {
+  padding: 12px 14px;
+  border-radius: 14px;
+  border: 1px solid;
+  display: flex;
+  flex-direction: column;
+  transition: transform 0.15s, box-shadow 0.15s;
+}
+.advisor-action-card:hover {
+  transform: translateY(-1px);
+  box-shadow: var(--shadow-sm);
+}
+@media (max-width: 700px) {
+  .advisor-actions-grid { grid-template-columns: 1fr; }
+  .advisor-modal { max-width: 96vw; }
+}
+
   margin-left: 2px;
   animation: cursor-blink 0.9s steps(2) infinite;
 }
