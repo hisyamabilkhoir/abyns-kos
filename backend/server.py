@@ -26,6 +26,29 @@ db = client[os.environ["DB_NAME"]]
 
 EMERGENT_LLM_KEY = os.environ.get("EMERGENT_LLM_KEY", "")
 
+# Midtrans QRIS
+import base64
+import hashlib
+import requests
+
+MIDTRANS_SERVER_KEY = os.environ.get("MIDTRANS_SERVER_KEY", "")
+MIDTRANS_CLIENT_KEY = os.environ.get("MIDTRANS_CLIENT_KEY", "")
+MIDTRANS_ENV = os.environ.get("MIDTRANS_ENV", "sandbox")
+MIDTRANS_BASE = (
+    "https://api.sandbox.midtrans.com"
+    if MIDTRANS_ENV != "production"
+    else "https://api.midtrans.com"
+)
+
+
+def midtrans_auth_headers():
+    token = base64.b64encode(f"{MIDTRANS_SERVER_KEY}:".encode()).decode()
+    return {
+        "Authorization": f"Basic {token}",
+        "Accept": "application/json",
+        "Content-Type": "application/json",
+    }
+
 app = FastAPI(title="ABYNS KOS API", version="1.0")
 api = APIRouter(prefix="/api/v1")
 
@@ -781,6 +804,226 @@ async def create_tenant_maintenance(tenant_id: str, body: MaintenanceCreateBody)
     })
     doc.pop("_id", None)
     return doc
+
+
+# ---------- MIDTRANS QRIS ----------
+async def _mark_invoice_paid(invoice_id: str, method: str = "qris_gopay"):
+    inv = await db.invoices.find_one({"id": invoice_id}, {"_id": 0})
+    if not inv or inv.get("status") == "paid":
+        return
+    now = now_iso()
+    await db.invoices.update_one({"id": invoice_id}, {"$set": {"status": "paid"}})
+    await db.payments.insert_one({
+        "id": uid(),
+        "invoice_id": invoice_id,
+        "tenant_id": inv["tenant_id"],
+        "amount": inv["amount"],
+        "method": method,
+        "paid_at": now,
+        "status": "verified",
+    })
+    await db.tenants.update_one(
+        {"id": inv["tenant_id"]}, {"$set": {"payment_status": "paid"}}
+    )
+    tenant = await db.tenants.find_one({"id": inv["tenant_id"]}, {"_id": 0})
+    await db.notifications.insert_one({
+        "id": uid(),
+        "property_id": inv.get("property_id"),
+        "type": "payment",
+        "title": "Payment received via QRIS",
+        "message": f"{tenant['name'] if tenant else 'Tenant'} paid Rp{inv['amount']:,} — {method}",
+        "created_at": now,
+    })
+
+
+@api.post("/invoices/{invoice_id}/qris/charge")
+async def qris_charge(invoice_id: str):
+    """Create a Midtrans QRIS charge and return QR image URL + order id."""
+    inv = await db.invoices.find_one({"id": invoice_id}, {"_id": 0})
+    if not inv:
+        raise HTTPException(404, "Invoice not found")
+    if inv["status"] == "paid":
+        return {"already_paid": True, "invoice_id": invoice_id}
+
+    # Reuse existing pending intent (< 25 minutes old and has snap_token)
+    existing = await db.payment_intents.find_one(
+        {
+            "invoice_id": invoice_id,
+            "status": "pending",
+            "snap_token": {"$exists": True, "$ne": None},
+        },
+        {"_id": 0},
+        sort=[("created_at", -1)],
+    )
+    if existing:
+        try:
+            created = datetime.fromisoformat(existing["created_at"])
+            if (datetime.now(timezone.utc) - created).total_seconds() < 25 * 60:
+                return existing
+        except Exception:
+            pass
+
+    order_id = f"ABYNS-{invoice_id[:8].upper()}-{int(datetime.now(timezone.utc).timestamp())}"
+    tenant = await db.tenants.find_one({"id": inv["tenant_id"]}, {"_id": 0}) or {}
+    name_parts = (tenant.get("name") or "Tenant").split(" ", 1)
+    first_name = name_parts[0]
+    last_name = name_parts[1] if len(name_parts) > 1 else ""
+
+    payload = {
+        "transaction_details": {
+            "order_id": order_id,
+            "gross_amount": int(inv["amount"]),
+        },
+        "item_details": [{
+            "id": inv["id"],
+            "price": int(inv["amount"]),
+            "quantity": 1,
+            "name": f"Sewa Kos {inv.get('period','')} - Kamar {tenant.get('room_number','-')}"[:50],
+        }],
+        "customer_details": {
+            "first_name": first_name[:20],
+            "last_name": last_name[:20],
+            "email": tenant.get("email", "tenant@abyns.id"),
+            "phone": tenant.get("phone", ""),
+        },
+        "enabled_payments": [
+            "other_qris", "gopay", "shopeepay", "dana", "ovo",
+            "bca_va", "bni_va", "bri_va", "permata_va", "other_va",
+            "credit_card",
+        ],
+        "credit_card": {"secure": True},
+        "callbacks": {"finish": ""},
+    }
+    try:
+        r = requests.post(
+            f"{MIDTRANS_BASE.replace('api.', 'app.')}/snap/v1/transactions"
+            if "sandbox" in MIDTRANS_BASE
+            else "https://app.midtrans.com/snap/v1/transactions",
+            json=payload,
+            headers=midtrans_auth_headers(),
+            timeout=20,
+        )
+    except Exception as e:
+        log.exception("Midtrans network error")
+        raise HTTPException(502, f"Midtrans network error: {e}")
+    if r.status_code >= 400:
+        log.error("Midtrans Snap failed %s %s", r.status_code, r.text)
+        raise HTTPException(502, f"Midtrans Snap error: {r.text[:400]}")
+    data = r.json()
+    if not data.get("token"):
+        raise HTTPException(502, f"Midtrans Snap: no token returned ({data})")
+
+    intent = {
+        "id": uid(),
+        "invoice_id": invoice_id,
+        "tenant_id": inv["tenant_id"],
+        "order_id": order_id,
+        "amount": int(inv["amount"]),
+        "snap_token": data["token"],
+        "snap_redirect_url": data.get("redirect_url"),
+        "acquirer": "snap",
+        "status": "pending",
+        "created_at": now_iso(),
+        "raw_status": "pending",
+    }
+    await db.payment_intents.insert_one(intent)
+    intent.pop("_id", None)
+    return intent
+
+
+@api.get("/invoices/{invoice_id}/qris/status")
+async def qris_status(invoice_id: str):
+    """Get latest intent and refresh status from Midtrans."""
+    intent = await db.payment_intents.find_one(
+        {"invoice_id": invoice_id}, {"_id": 0}, sort=[("created_at", -1)]
+    )
+    if not intent:
+        raise HTTPException(404, "No payment intent")
+
+    if intent["status"] == "settlement":
+        return intent
+
+    try:
+        r = requests.get(
+            f"{MIDTRANS_BASE}/v2/{intent['order_id']}/status",
+            headers=midtrans_auth_headers(),
+            timeout=15,
+        )
+    except Exception:
+        return intent
+
+    if r.status_code == 404 or r.status_code >= 500:
+        return intent
+    data = r.json()
+    t_status = data.get("transaction_status", "pending")
+    fraud = data.get("fraud_status", "accept")
+
+    if t_status in ("settlement", "capture") and fraud == "accept":
+        new_status = "settlement"
+    elif t_status in ("expire", "cancel", "deny"):
+        new_status = t_status
+    else:
+        new_status = "pending"
+
+    if new_status != intent["status"]:
+        await db.payment_intents.update_one(
+            {"order_id": intent["order_id"]},
+            {"$set": {"status": new_status, "raw_status": t_status, "updated_at": now_iso()}},
+        )
+        intent["status"] = new_status
+        intent["raw_status"] = t_status
+        if new_status == "settlement":
+            await _mark_invoice_paid(intent["invoice_id"], method=f"qris_{data.get('acquirer', 'gopay')}")
+    return intent
+
+
+@api.post("/midtrans/notification")
+async def midtrans_notification(payload: dict):
+    """Webhook endpoint for Midtrans HTTP notifications.
+    Configure in Midtrans dashboard: <backend>/api/v1/midtrans/notification
+    """
+    order_id = payload.get("order_id", "")
+    status_code = payload.get("status_code", "")
+    gross_amount = payload.get("gross_amount", "")
+    signature = payload.get("signature_key", "")
+
+    expected = hashlib.sha512(
+        f"{order_id}{status_code}{gross_amount}{MIDTRANS_SERVER_KEY}".encode()
+    ).hexdigest()
+    if not signature or signature != expected:
+        log.warning("Midtrans notification: bad signature for order=%s", order_id)
+        raise HTTPException(401, "Invalid signature")
+
+    t_status = payload.get("transaction_status", "pending")
+    fraud = payload.get("fraud_status", "accept")
+
+    intent = await db.payment_intents.find_one({"order_id": order_id}, {"_id": 0})
+    if not intent:
+        return {"ok": True, "note": "unknown order"}
+
+    if t_status in ("settlement", "capture") and fraud == "accept":
+        await db.payment_intents.update_one(
+            {"order_id": order_id},
+            {"$set": {"status": "settlement", "raw_status": t_status, "updated_at": now_iso()}},
+        )
+        await _mark_invoice_paid(
+            intent["invoice_id"], method=f"qris_{payload.get('acquirer', 'gopay')}"
+        )
+    elif t_status in ("expire", "cancel", "deny"):
+        await db.payment_intents.update_one(
+            {"order_id": order_id},
+            {"$set": {"status": t_status, "raw_status": t_status, "updated_at": now_iso()}},
+        )
+    return {"ok": True}
+
+
+@api.get("/midtrans/config")
+async def midtrans_config():
+    return {
+        "client_key": MIDTRANS_CLIENT_KEY,
+        "env": MIDTRANS_ENV,
+        "merchant_id": os.environ.get("MIDTRANS_MERCHANT_ID", ""),
+    }
 
 
 app.include_router(api)

@@ -9,8 +9,15 @@ export const getTenantDashboard = (id) =>
 export const listMyInvoices = (id) =>
   api.get(`/tenant/${id}/invoices`).then((r) => r.data);
 
+// Legacy mock pay (kept for fallback demo scenarios)
 export const payInvoice = (invoiceId) =>
   api.post(`/invoices/${invoiceId}/pay`).then((r) => r.data);
+
+// QRIS (Midtrans)
+export const chargeQris = (invoiceId) =>
+  api.post(`/invoices/${invoiceId}/qris/charge`).then((r) => r.data);
+export const getQrisStatus = (invoiceId) =>
+  api.get(`/invoices/${invoiceId}/qris/status`).then((r) => r.data);
 
 export const listMyMaintenance = (id) =>
   api.get(`/tenant/${id}/maintenance`).then((r) => r.data);
