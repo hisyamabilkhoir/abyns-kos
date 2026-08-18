@@ -1,0 +1,56 @@
+{
+  "verdict": "not_fixed",
+  "user_reported_bug": "tombol nya jangan di situ harusnya di atas aja kemudian ada card analisi ai terus itu juga kalo lagi loading jnagan error harusnya loader aja dan perbaiki modal nya itu jadi bikin tampilan rusak",
+  "summary": "Focused /finance AI Retention Advisor modal retest. yarn build now exits 0. Real UI flow confirmed loader, top action cards, AI Analysis card/order, real AI stream, and preventive action success; however the modal layout is still broken at 1440x900: footer is below the viewport and not visible while scrolling the middle content, so the reported broken modal display is not fixed.",
+  "backend_issues": {
+    "critical": [],
+    "minor": []
+  },
+  "frontend_issues": {
+    "ui_bugs": [
+      {
+        "component": "RetentionAdvisorModal",
+        "issue": "Modal footer is not visible and modal content overflows past the viewport after AI analysis loads. Measured .advisor-modal bottom=992.109375px with viewportHeight=900px; footerVisible=false before and after setting .advisor-scroll.scrollTop to bottom.",
+        "selector": "[data-testid='advisor-modal'] .advisor-scroll",
+        "priority": "HIGH"
+      }
+    ],
+    "integration_issues": [],
+    "design_issues": [
+      {
+        "screen": "/finance AI Retention Advisor modal",
+        "issues": [
+          "Internal scroll exists (overflowY=auto; scrollHeight=1055, clientHeight=617), but fixed footer is below viewport, so the modal still breaks visually at 1440x900.",
+          "Close via X was not reached in the main automated assertion flow because the test failed at the layout requirement first."
+        ]
+      }
+    ]
+  },
+  "test_report_links": [
+    "/app/test_reports/retention_advisor_modal_iteration4.py",
+    "/app/test_reports/bug_verification_4.json",
+    "/app/test_reports/iteration_4.json"
+  ],
+  "action_items": [
+    "Fix advisor modal sizing so the whole modal stays within viewport and only .advisor-scroll scrolls, with header and footer always visible.",
+    "Retest at 1440x900 after fixing CSS cascade/height constraints."
+  ],
+  "critical_code_review_comments": [
+    "CSS build succeeds, but /app/frontend/src/index.css still looks suspicious around .expiring-row:hover near line 1474, where the hover block appears not to close before Retention Insights styles; verify cascade validity.",
+    "The generic .modal rule is declared after .advisor-modal and may override desired advisor modal padding/max-width; ensure advisor-specific modal constraints win and set overflow hidden/min-height:0 as needed."
+  ],
+  "updated_files": [
+    "/app/test_reports/retention_advisor_modal_iteration4.py",
+    "/app/test_reports/bug_verification_4.json",
+    "/app/test_reports/iteration_4.json"
+  ],
+  "success_rate": {
+    "backend": "100%",
+    "frontend": "75%"
+  },
+  "seed_data_creation": "No seed data created. Test clicked the real Preventive Maintenance advisor action once, creating 3 maintenance tasks via POST /api/v1/advisor/actions/preventive-maintenance.",
+  "retest_needed": true,
+  "should_main_agent_self_test": true,
+  "context_for_next_testing_agent": "Skills loaded: ai-testing-core and ai-testing-llm. Build evidence: `yarn build` in /app/frontend exited 0 with only existing hook warnings. Browser evidence: loader_count=4 within 500ms, no 'Gagal memuat analisa', DOM order OK, 3 action buttons visible, AI endpoint 200, analysis length=1098 with DIAGNOSA/TINDAKAN/TARGET and green selesai, preventive action endpoint 200 with '3 tugas dibuat.'. Failure evidence: scroll/layout info before={scrollHeight:1055, clientHeight:617, overflowY:'auto', headerVisible:true, footerVisible:false, modalBottom:992.109375, viewportHeight:900}; after scroll footerVisible:false and modalBottom still 992.109375.",
+  "rca_of_the_issue": "Reproduction: open /finance, scroll to Renewal Insights, click Tanya ABYNS AI, wait for analysis completion and run Preventive Maintenance. The middle scroll area works, but the modal itself extends below the 900px viewport and hides the footer, so the fixed header/footer requirement is still violated. Likely CSS height/cascade issue in index.css around advisor modal constraints. No mocked APIs were used."
+}
