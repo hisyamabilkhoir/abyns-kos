@@ -14,9 +14,10 @@ import {
 } from "recharts";
 import { getDashboard } from "../services/dashboardService";
 import { listExpiringContracts, renewContract } from "../services/contractService";
+import { sendRenewalNudge } from "../services/reminderService";
 import { Card, KpiCard, Badge, Avatar, CircularScore, Skeleton, EmptyState } from "../components/UI";
 import { currency, compact } from "../services/api";
-import { ArrowUpRight, Sparkles, ArrowRight, Clock, AlertCircle, CalendarClock, RefreshCw } from "lucide-react";
+import { ArrowUpRight, Sparkles, ArrowRight, Clock, AlertCircle, CalendarClock, RefreshCw, MessageCircle } from "lucide-react";
 
 const COLORS = ["#1f8f5a", "#c58a12", "#b91c3c"];
 
@@ -24,6 +25,8 @@ export default function Dashboard() {
   const [data, setData] = useState(null);
   const [expiring, setExpiring] = useState([]);
   const [renewingId, setRenewingId] = useState(null);
+  const [nudgingId, setNudgingId] = useState(null);
+  const [nudgeToast, setNudgeToast] = useState("");
   const loadExp = () => listExpiringContracts(60).then(setExpiring).catch(() => {});
   useEffect(() => {
     getDashboard().then(setData).catch(console.error);
@@ -35,6 +38,20 @@ export default function Dashboard() {
     await renewContract(row.contract_id, 12);
     await loadExp();
     setRenewingId(null);
+  };
+
+  const nudge = async (row) => {
+    setNudgingId(row.contract_id);
+    try {
+      const res = await sendRenewalNudge(row.contract_id);
+      if (res.skipped) setNudgeToast(`Sudah dinudge hari ini ke ${row.tenant_name}.`);
+      else if (res.ok) setNudgeToast(`WhatsApp terkirim ke ${row.tenant_name} 🎉`);
+      else setNudgeToast(`Gagal: ${res.provider?.error || "coba lagi"}`);
+    } catch (e) {
+      setNudgeToast(e?.response?.data?.detail || "Gagal mengirim.");
+    }
+    setTimeout(() => setNudgeToast(""), 3500);
+    setNudgingId(null);
   };
 
   if (!data)
@@ -303,9 +320,15 @@ export default function Dashboard() {
           data-testid="expiring-contracts"
           actions={<Badge variant="warn" dot>{expiring.length} akan berakhir</Badge>}
         >
+          {nudgeToast && (
+            <div className="paid-toast" data-testid="nudge-toast">
+              <MessageCircle size={16} /> {nudgeToast}
+            </div>
+          )}
           <div className="col" style={{ gap: 8 }}>
             {expiring.slice(0, 6).map((e) => {
               const critical = e.days_remaining != null && e.days_remaining <= 14;
+              const canNudge = e.days_remaining != null && e.days_remaining > 0 && e.days_remaining <= 30;
               return (
                 <div key={e.contract_id} className="expiring-row" data-testid={`exp-${e.contract_id}`}>
                   <div className="avatar sm">
@@ -322,6 +345,17 @@ export default function Dashboard() {
                       ? `Lewat ${Math.abs(e.days_remaining)}d`
                       : `${e.days_remaining} hari lagi`}
                   </Badge>
+                  {canNudge && (
+                    <button
+                      className="btn btn-soft btn-sm"
+                      onClick={() => nudge(e)}
+                      disabled={nudgingId === e.contract_id}
+                      data-testid={`nudge-${e.contract_id}`}
+                      title="Kirim WhatsApp ajakan perpanjang"
+                    >
+                      <MessageCircle size={12} /> {nudgingId === e.contract_id ? "..." : "Nudge"}
+                    </button>
+                  )}
                   <button
                     className="btn btn-gold btn-sm"
                     onClick={() => quickRenew(e)}

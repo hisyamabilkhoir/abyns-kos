@@ -866,6 +866,74 @@ async def _send_and_log_reminder(inv: dict, rtype: str, triggered_by: str = "cro
     return {"ok": result.get("ok"), "record": record, "provider": result}
 
 
+def _renewal_nudge_message(tenant: dict, contract: dict, days: int) -> str:
+    name = tenant.get("name", "").split(" ")[0] or "Kak"
+    link = f"{FRONTEND_URL}/tenant/login" if FRONTEND_URL else "portal ABYNS"
+    end = contract.get("end_date", "-")
+    day_line = (
+        f"{days} hari lagi" if days > 0 else "hari ini" if days == 0 else f"{abs(days)} hari lewat"
+    )
+    return (
+        f"Halo {name}! 👋 Ini ABYNS KOS.\n\n"
+        f"Kontrak kamar *{tenant.get('room_number','-')}* akan berakhir *{day_line}* "
+        f"(📅 {end}).\n\n"
+        f"Yuk perpanjang sekarang biar kamar tetap jadi milik Anda. Buka portal:\n{link}\n\n"
+        f"Tinggal klik tombol *Perpanjang Kontrak* di halaman utama. Terima kasih 🙏"
+    )
+
+
+async def _send_and_log_renewal_nudge(contract: dict, triggered_by: str = "cron"):
+    """Idempotent per (contract_id, day_key)."""
+    today = datetime.now(timezone.utc).date().isoformat()
+    existing = await db.reminders.find_one(
+        {"contract_id": contract["id"], "day_key": today, "reminder_type": "RENEW-14"},
+        {"_id": 0},
+    )
+    if existing:
+        return {"skipped": True, "reason": "already_sent_today", "record": existing}
+    tenant = await db.tenants.find_one({"id": contract["tenant_id"]}, {"_id": 0}) or {}
+    phone = _normalize_phone(tenant.get("phone", ""))
+    if not phone:
+        return {"ok": False, "error": "tenant has no phone"}
+    try:
+        end = datetime.fromisoformat(contract["end_date"]).date()
+        days = (end - datetime.now(timezone.utc).date()).days
+    except Exception:
+        days = None
+    message = _renewal_nudge_message(tenant, contract, days or 0)
+    result = _fonnte_send(phone, message)
+    record = {
+        "id": uid(),
+        "contract_id": contract["id"],
+        "tenant_id": contract["tenant_id"],
+        "tenant_name": tenant.get("name"),
+        "phone": phone,
+        "reminder_type": "RENEW-14",
+        "message": message,
+        "sent_at": now_iso(),
+        "day_key": today,
+        "status": "sent" if result.get("ok") else "failed",
+        "provider_response": result,
+        "triggered_by": triggered_by,
+        "days_remaining_at_send": days,
+    }
+    await db.reminders.insert_one(record)
+    record.pop("_id", None)
+    return {"ok": result.get("ok"), "record": record, "provider": result}
+
+
+class NudgeBody(BaseModel):
+    contract_id: str
+
+
+@api.post("/reminders/renewal/send")
+async def renewal_nudge_manual(body: NudgeBody):
+    c = await db.contracts.find_one({"id": body.contract_id}, {"_id": 0})
+    if not c:
+        raise HTTPException(404, "Contract not found")
+    return await _send_and_log_renewal_nudge(c, triggered_by="manual")
+
+
 class ReminderSendBody(BaseModel):
     invoice_id: str
 
@@ -931,6 +999,36 @@ async def reminders_preview():
             "due_date": i["due_date"],
             "already_sent_today": key in already,
         })
+    # Also include renewal nudges (contracts expiring in 10..14 days)
+    lo_c = (today + timedelta(days=10)).isoformat()
+    hi_c = (today + timedelta(days=14)).isoformat()
+    contracts = await db.contracts.find(
+        {"status": "active", "end_date": {"$gte": lo_c, "$lte": hi_c}}, {"_id": 0}
+    ).to_list(200)
+    renew_sent_today = {
+        r["contract_id"] for r in await db.reminders.find(
+            {"day_key": today.isoformat(), "reminder_type": "RENEW-14"}, {"_id": 0}
+        ).to_list(500)
+    }
+    for c in contracts:
+        t = await db.tenants.find_one({"id": c["tenant_id"]}, {"_id": 0}) or {}
+        try:
+            end = datetime.fromisoformat(c["end_date"]).date()
+            days = (end - today).days
+        except Exception:
+            days = None
+        out.append({
+            "contract_id": c["id"],
+            "tenant_id": t.get("id"),
+            "tenant_name": t.get("name"),
+            "room_number": t.get("room_number"),
+            "phone": _normalize_phone(t.get("phone", "")),
+            "reminder_type": "RENEW-14",
+            "amount": c.get("monthly_rent"),
+            "due_date": c.get("end_date"),
+            "days_remaining": days,
+            "already_sent_today": c["id"] in renew_sent_today,
+        })
     return out
 
 
@@ -965,6 +1063,17 @@ async def cron_reminders(request: Request):
                     await _send_and_log_reminder(i, rt, triggered_by=f"cron:{run_id}")
                 except Exception:
                     log.exception("reminder failed for %s", i.get("id"))
+        # Renewal nudges — contracts expiring in 10-14 days
+        lo_c = (today + timedelta(days=10)).isoformat()
+        hi_c = (today + timedelta(days=14)).isoformat()
+        contracts = await db.contracts.find(
+            {"status": "active", "end_date": {"$gte": lo_c, "$lte": hi_c}}, {"_id": 0}
+        ).to_list(500)
+        for c in contracts:
+            try:
+                await _send_and_log_renewal_nudge(c, triggered_by=f"cron:{run_id}")
+            except Exception:
+                log.exception("renewal nudge failed for %s", c.get("id"))
 
     import asyncio
     asyncio.create_task(_work())
